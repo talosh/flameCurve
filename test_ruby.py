@@ -195,6 +195,7 @@ def bake_flame_tw_setup(tw_setup_path, start, end):
     cmd = parser_and_baker + ' -c ' + tw_channel_name
     cmd += ' -s ' + str(intp_start) + ' -e ' + str(intp_end)
     cmd += ' --to-file ' + parsed_and_baked_path + ' ' + xml_path
+    print (cmd)
     os.system(cmd)
 
     if not os.path.isfile(parsed_and_baked_path):
@@ -309,89 +310,6 @@ def bake_flame_tw_setup(tw_setup_path, start, end):
 
             # create easy in and out soft mixing curve
             import numpy as np
-            
-            def cubic_spline_interpolation(x, y):
-                n = len(x)
-                h = np.diff(x)
-                alpha = np.zeros(n - 1)
-                for i in range(1, n - 1):
-                    alpha[i] = 3/h[i] * (y[i+1] - y[i]) - 3/h[i-1] * (y[i] - y[i-1])
-                l = np.zeros(n)
-                mu = np.zeros(n)
-                z = np.zeros(n)
-                for i in range(1, n - 1):
-                    l[i] = 2 * (x[i+1] - x[i-1]) - h[i-1] * mu[i-1]
-                    mu[i] = h[i] / l[i]
-                    z[i] = (alpha[i] - h[i-1] * z[i-1]) / l[i]
-                b = np.zeros(n-1)
-                c = np.zeros(n)
-                d = np.zeros(n-1)
-                for j in range(n-2, -1, -1):
-                    c[j] = z[j] - mu[j] * c[j+1]
-                    b[j] = (y[j+1] - y[j])/h[j] - h[j] * (c[j+1] + 2 * c[j])/3
-                    d[j] = (c[j+1] - c[j]) / (3 * h[j])
-
-                def s(xx):
-                    # i = np.searchsorted(x, xx)
-                    pprint (b)
-                    pprint (c)
-                    pprint (d)
-                    print (i)
-                    return y[i] + b[i]*(xx-x[i]) + c[i]*(xx-x[i])**2 + d[i]*(xx-x[i])**3
-
-                # s = lambda xx: print (i) # y[i] + b[i]*(xx-x[i]) + c[i]*(xx-x[i])**2 + d[i]*(xx-x[i])**3
-                return s
-                # return b, c, d
-
-            def cubic_spline(x, y):
-                n = len(x) - 1
-                h = np.diff(x)
-                tri_diag = np.zeros((3, n))
-                rhs = np.zeros(n)
-                tri_diag[0, 1:] = h[:-1]
-                tri_diag[1, :] = 2 * (h[:-1] + h[1:])
-                tri_diag[2, :-1] = h[1:]
-                rhs[1:-1] = 3 * np.diff(y, 2) / np.diff(x, 2)
-                rhs[0] = rhs[-1] = 0
-                tri_diag_inv = np.linalg.inv(tri_diag)
-                b = tri_diag_inv.dot(rhs)
-                d = np.diff(b) / (3 * h)
-                a = y[:-1]
-                c = np.diff(y) / h - h * (2 * b[:-1] + b[1:]) / 3
-                s = lambda t: np.piecewise(
-                    t, 
-                    [t <= x[0], t >= x[-1]], 
-                    [lambda t: y[0] + (t - x[0]) * c[0] + (t - x[0]) ** 2 * b[0] + (t - x[0]) ** 3 * d[0],
-                    lambda t: y[-1] + (t - x[-1]) * c[-1] + (t - x[-1]) ** 2 * b[-1] + (t - x[-1]) ** 3 * d[-1]],
-                    lambda t: np.interp(t, x, y))
-                return s
-
-            def spline_interpolation(x_new):
-                ctr =np.array( [(0 , 0), (0.1, 0), (0.9, 1),  (1, 1)])
-                x=ctr[:,0]
-                y=ctr[:,1]            
-
-                # Find the index value s falls between in the array x
-                idx = np.searchsorted(x, x_new)
-
-                # Check if x_new is outside the range of x
-                if idx == 0:
-                    return y[0]
-                elif idx == len(x):
-                    return y[-1]
-
-                # Calculate the coefficients of the cubic polynomial
-                h = x[idx] - x[idx-1]
-                a = (x[idx]-x_new)/h
-                b = (x_new-x[idx-1])/h
-                c = (a**3 - a)*h**2/6
-                d = (b**3 - b)*h**2/6
-
-                # Interpolate using the cubic polynomial
-                y_new = a*y[idx-1] + b*y[idx] + c*y[idx-1] + d*y[idx]
-
-                return y_new
-
 
             ctr =np.array( [(0 , 0), (0.1, 0), (0.9, 1),  (1, 1)])
             x=ctr[:,0]
@@ -405,8 +323,6 @@ def bake_flame_tw_setup(tw_setup_path, start, end):
             rstep = 1 / len(work_range)
             for frame_number in sorted(work_range):
                 frame_value_map[frame_number] = forward_pass[frame_number] * (1 - interp(ratio)) + backward_pass[frame_number] * interp(ratio)
-                test = forward_pass[frame_number] * (1 - spline_interpolation(ratio)) + backward_pass[frame_number] * spline_interpolation(ratio)
-                print ('%s:\t\t%s * %s' % (ratio, frame_value_map.get(frame_number), test))
                 ratio += rstep
         
         last_key_index = list(sorted(tw_speed_timing.keys()))[-1]
