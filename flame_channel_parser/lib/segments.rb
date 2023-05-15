@@ -226,6 +226,8 @@ module FlameChannelParser::Segments #:nodoc:
   # This segment does extrapolation using the tangent from the preceding keyframe
   class LinearExtrapolate < ConstantExtrapolate #:nodoc:
     def initialize(from_frame, base_value, tangent)
+      puts "LinearExtrapolate -> initialize"
+      pp tangent
       super(from_frame, base_value)
       @tangent = tangent.to_f
     end

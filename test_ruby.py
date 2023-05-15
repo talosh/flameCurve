@@ -89,7 +89,7 @@ def bake_flame_tw_setup(tw_setup_path, start, end):
     else:
         parser_and_baker = os.path.join(os.path.dirname(__file__), 'flame_channel_parser', 'bin', 'bake_flame_channel')
 
-
+    '''
     if TW_SpeedTiming_size == 1 and TW_RetimerMode == 0:
         # just constant speed change with no keyframes set       
         x = float(tw_setup['Setup']['State'][0]['TW_SpeedTiming'][0]['Channel'][0]['KFrames'][0]['Key'][0]['Frame'][0]['_text'])
@@ -103,6 +103,7 @@ def bake_flame_tw_setup(tw_setup_path, start, end):
             frame_value_map[frame_number] = extrapolate_linear(x + ldx, y + ldy, x + rdx, y + rdy, frame_number)
     
         return frame_value_map
+    '''
     
     # add point tangents from vecrors to match older version of setup
     # used by Julik's parser
@@ -156,7 +157,7 @@ def bake_flame_tw_setup(tw_setup_path, start, end):
     if TW_RetimerMode == 0:
         tw_speed = {}
         tw_speed_frames = []
-        TW_Speed = xml.getElementsByTagName('TW_Speed')
+        TW_Speed = xml.getElementsByTagName('TW_SpeedTiming')
         keys = TW_Speed[0].getElementsByTagName('Key')
         for key in keys:
             index = key.getAttribute('Index') 
@@ -195,7 +196,7 @@ def bake_flame_tw_setup(tw_setup_path, start, end):
     cmd = parser_and_baker + ' -c ' + tw_channel_name
     cmd += ' -s ' + str(intp_start) + ' -e ' + str(intp_end)
     cmd += ' --to-file ' + parsed_and_baked_path + ' ' + xml_path
-    print (cmd)
+    pprint (cmd)
     os.system(cmd)
 
     if not os.path.isfile(parsed_and_baked_path):
@@ -346,7 +347,6 @@ temp_setup_path = sys.argv[1]
 if not temp_setup_path:
     print ('no file to parse')
     sys.exit()
-
 keys = decode_tw_setup(temp_setup_path)
 
 pprint (keys)

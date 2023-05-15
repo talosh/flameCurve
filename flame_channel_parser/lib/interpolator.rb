@@ -1,4 +1,5 @@
 require File.expand_path(File.dirname(__FILE__)) + "/segments"
+require 'pp'
 
 # Used to sample Flame animation curves. Pass a Channel
 # object to the interpolator and you can then sample values at arbitrary
@@ -61,6 +62,7 @@ class FlameChannelParser::Interpolator
     
     # Then all the intermediate segments, one segment between each pair of keys
     channel[0..-2].each_with_index do | key, index |
+      puts "ïntermediate"
       segments << key_pair_to_segment(key, channel[index + 1])
     end
     
@@ -95,6 +97,7 @@ class FlameChannelParser::Interpolator
   end
   
   def pick_prepolation(extrap_symbol, first_key, second_key)
+    puts "pick_prepolation function"
     if extrap_symbol == :linear && second_key
       if first_key.interpolation != :linear
         LinearPrepolate.new(first_key.frame, first_key.value, first_key.left_slope)
@@ -110,6 +113,7 @@ class FlameChannelParser::Interpolator
   end
   
   def pick_extrapolation(extrap_symbol, previous_key, last_key)
+    puts "pick_extrapolation function"
     if extrap_symbol == :linear
       if previous_key && last_key.interpolation == :linear
         # For linear keys the tangent actually does not do anything, so we need to look a frame
@@ -117,9 +121,11 @@ class FlameChannelParser::Interpolator
         increment = (last_key.value - previous_key.value) / (last_key.frame - previous_key.frame)
         LinearExtrapolate.new(last_key.frame, last_key.value, increment)
       else
+        puts "LinearExtrapolate -> last_key.right_slope"
         LinearExtrapolate.new(last_key.frame, last_key.value, last_key.right_slope)
       end
     else
+      puts "pick_extrapolation function -> constant"
       ConstantExtrapolate.new(last_key.frame, last_key.value)
     end
   end
