@@ -316,7 +316,7 @@ def bake_flame_tw_setup(tw_setup_path, start, end):
             x=ctr[:,0]
             y=ctr[:,1]            
             
-            from scipy import interpolate
+            from bruteforce import interpolate
             interp = interpolate.CubicSpline(x, y)
 
             work_range = list(forward_pass.keys())
