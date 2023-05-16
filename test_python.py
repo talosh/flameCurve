@@ -91,9 +91,13 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
 
         class ConstantSegment:
             def __init__(self, from_frame, to_frame, value):
+                self._mode = 'constant'
                 self.start_frame = from_frame
                 self.end_frame = to_frame
                 self.v1 = value
+
+            def mode(self):
+                return self._mode
 
             def defines(self, frame):
                 return (frame < self.end_frame) and (frame >= self.start_frame)
@@ -105,6 +109,7 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
             def __init__(self, from_frame, to_frame, value1, value2):
                 self.vint = (value2 - value1)
                 super().__init__(from_frame, to_frame, value1)
+                self._mode = 'linear'
 
             def value_at(self, frame):
                 on_t_interval = (frame - self.start_frame) / (self.end_frame - self.start_frame)
@@ -114,6 +119,7 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
             def __init__(self, from_frame, to_frame, value1, value2, tangent1, tangent2):
                 self.start_frame, self.end_frame = from_frame, to_frame
                 frame_interval = (self.end_frame - self.start_frame)
+                self._mode = 'hermite'
 
                 self.HERMATRIX = np.array([
                     [2,  -2,  1,  1],
@@ -143,9 +149,161 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
                 interpolated_scalar = np.dot(self.basis, multipliers_vec)
                 return interpolated_scalar
 
+        class HermiteSegmentQuartic(LinearSegment):
+            '''
+            Make sure not to confuse them with quartic (= degree 4) Hermite splines, 
+            which are defined by 5 values per segment: function value and first derivative at both ends, 
+            and one of the second derivatives.
+            '''
+            '''
+            P(x0) = y0    =>    a0 + a1*x0 + a2*x0^2 + a3*x0^3 + a4*x0^4 = y0   --(1)
+            P(x1) = y1    =>    a0 + a1*x1 + a2*x1^2 + a3*x1^3 + a4*x1^4 = y1   --(2)
+            
+            P'(x0) = tx0    =>    a1 + 2*a2*x0 + 3*a3*x0^2 + 4*a4*x0^3 = tx0   --(3)
+            P'(x1) = tx1    =>    a1 + 2*a2*x1 + 3*a3*x1^2 + 4*a4*x1^3 = tx1   --(4)
+
+            We have four equations (equations (1)-(4)) and five unknowns (a0, a1, a2, a3, a4). 
+            To solve this system of equations, we can rewrite it in matrix form:
+
+            A * X = B
+
+            where A is the coefficient matrix, 
+            X is the column vector of unknowns, 
+            and B is the column vector of constants.
+
+            A = | 1   x0   x0^2   x0^3   x0^4 |
+                | 1   x1   x1^2   x1^3   x1^4 |
+                | 0   1    2*x0   3*x0^2 4*x0^3 |
+                | 0   1    2*x1   3*x1^2 4*x1^3 |
+
+            X = | a0 |
+                | a1 |
+                | a2 |
+                | a3 |
+                | a4 |
+
+            B = | y0 |
+                | y1 |
+                | tx0 |
+                | tx1 |
+
+            To solve for X, we can compute X = inv(A) * B, where inv(A) is the inverse of matrix A.
+            Once we have the values of a0, a1, a2, a3, and a4, we can substitute them back 
+            into the quartic polynomial P(x) to obtain the interpolated values for any desired x.
+
+            P(x) = a0 + a1*x + a2*x^2 + a3*x^3 + a4*x^4
+            
+            '''
+            def __init__(self, from_frame, to_frame, value1, value2, tangent1, tangent2):
+                self.start_frame, self.end_frame = from_frame, to_frame
+                frame_interval = (self.end_frame - self.start_frame)
+                self._mode = 'hermite'
+
+                self.HERMATRIX = np.array([
+                            [1, 0, 0, 0, 0],
+                            [1, 1, 1, 1, 1],
+                            [0, 1, 0, 0, 0],
+                            [0, 1, 2, 3, 4],
+                            [0, 0, 0, 0, 1]
+                        ])
+                
+                self.HERMATRIX = np.linalg.inv(self.HERMATRIX)
+
+                # Default tangents in flame are 0, so when we do None.to_f this is what we will get
+                # CC = {P1, P2, T1, T2}
+                p1, p2, t1, t2 = value1, value2, tangent1 * frame_interval, tangent2 * frame_interval
+                self.hermite = np.array([p1, p2, t1, t2, 0])
+                self.basis = np.dot(self.HERMATRIX, self.hermite)
+
+            def value_at(self, frame):
+                if frame == self.start_frame:
+                    return self.hermite[0]
+
+                # Get the 0 < T < 1 interval we will interpolate on
+                t = (frame - self.start_frame) / (self.end_frame - self.start_frame)
+
+                # S[s_] = {s^4, s^3, s^2, s^1, s^0}
+                multipliers_vec = np.array([t ** 4, t ** 3, t ** 2, t ** 1, t ** 0])
+
+                # P[s_] = S[s].h.CC
+                interpolated_scalar = np.dot(self.basis, multipliers_vec)
+                return interpolated_scalar
+
+
+        class BezierSegment(LinearSegment):
+            class Pt:
+                def __init__(self, x, y, tanx, tany):
+                    self.x = x
+                    self.y = y
+                    self.tanx = tanx
+                    self.tany = tany
+            
+            def __init__(self, x1, x2, y1, y2, t1x, t1y, t2x, t2y):
+                super().__init__(x1, x2, y1, y2)
+                self.a = self.Pt(x1, y1, t1x, t1y)
+                self.b = self.Pt(x2, y2, t2x, t2y)
+                self._mode = 'bezier'
+
+            def value_at(self, frame):
+                if frame == self.start_frame:
+                    return self.a.y
+                
+                t = self.approximate_t(frame, self.a.x, self.a.tanx, self.b.tanx, self.b.x)
+                vy = self.bezier(t, self.a.y, self.a.tany, self.b.tany, self.b.y)
+                return vy
+            
+            def bezier(self, t, a, b, c, d):
+                return a + (a*(-3) + b*3)*(t) + (a*3 - b*6 + c*3)*(t**2) + (-a + b*3 - c*3 + d)*(t**3)
+            
+            def clamp(self, value):
+                if value < 0:
+                    return 0.0
+                elif value > 1:
+                    return 1.0
+                else:
+                    return value
+            
+            APPROXIMATION_EPSILON = 1.0e-09
+            VERYSMALL = 1.0e-20
+            MAXIMUM_ITERATIONS = 100
+            
+            def approximate_t(self, atX, p0x, c0x, c1x, p1x):
+                if atX - p0x < self.VERYSMALL:
+                    return 0.0
+                elif p1x - atX < self.VERYSMALL:
+                    return 1.0
+
+                u, v = 0.0, 1.0
+                
+                for i in range(self.MAXIMUM_ITERATIONS):
+                    a = (p0x + c0x) / 2.0
+                    b = (c0x + c1x) / 2.0
+                    c = (c1x + p1x) / 2.0
+                    d = (a + b) / 2.0
+                    e = (b + c) / 2.0
+                    f = (d + e) / 2.0
+                    
+                    if abs(f - atX) < self.APPROXIMATION_EPSILON:
+                        return self.clamp((u + v) * 0.5)
+                    
+                    if f < atX:
+                        p0x = f
+                        c0x = e
+                        c1x = c
+                        u = (u + v) / 2.0
+                    else:
+                        c0x = a
+                        c1x = d
+                        p1x = f
+                        v = (u + v) / 2.0
+                
+                return self.clamp((u + v) / 2.0)
+
+
         class ConstantPrepolate(ConstantSegment):
             def __init__(self, to_frame, base_value):
                 super().__init__(float('-inf'), to_frame, base_value)
+                self._mode = 'ConstantPrepolate'
 
             def value_at(self, frame):
                 return self.v1
@@ -153,6 +311,7 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
         class ConstantExtrapolate(ConstantSegment):
             def __init__(self, from_frame, base_value):
                 super().__init__(from_frame, float('inf'), base_value)
+                self._mode = 'ConstantExtrapolate'
 
             def value_at(self, frame):
                 return self.v1
@@ -161,6 +320,7 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
             def __init__(self, to_frame, base_value, tangent):
                 self.tangent = float(tangent)
                 super().__init__(to_frame, base_value)
+                self._mode = 'LinearPrepolate'
 
             def value_at(self, frame):
                 frame_diff = (self.end_frame - frame)
@@ -170,6 +330,7 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
             def __init__(self, from_frame, base_value, tangent):
                 self.tangent = float(tangent)
                 super().__init__(from_frame, base_value)
+                self._mode = 'LinearExtrapolate'
 
             def value_at(self, frame):
                 frame_diff = (frame - self.start_frame)
@@ -178,6 +339,7 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
         class ConstantFunction(ConstantSegment):
             def __init__(self, value):
                 super().__init__(float('-inf'), float('inf'), value)
+                self._mode = 'ConstantFunction'
 
             def defines(self, frame):
                 return True
@@ -254,13 +416,25 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
                 segments.append(self.key_pair_to_segment(kframes[key], kframes[index_frames[index + 1]]))
 
             # and the extrapolator
-            #segments.append(self.pick_extrapolation(channel.extrapolation, channel[-2], channel[-1]))
+            segments.append(self.pick_extrapolation(channel.get('Extrap', 'constant'), kframes[index_frames[-2]], kframes[index_frames[-1]]))
             return segments
 
         def sample_from_segments(self, at_frame):
             for segment in self.segments:
                 if segment.defines(at_frame):
                     return segment.value_at(at_frame)
+            raise ValueError(f'No segment on this curve that can interpolate the value at {at_frame}')
+        
+        def segment_mode(self, at_frame):
+            for segment in self.segments:
+                if segment.defines(at_frame):
+                    return segment.mode()
+            raise ValueError(f'No segment on this curve that can interpolate the value at {at_frame}')
+        
+        def get_segment(self, at_frame):
+            for segment in self.segments:
+                if segment.defines(at_frame):
+                    return segment
             raise ValueError(f'No segment on this curve that can interpolate the value at {at_frame}')
 
         def pick_prepolation(self, extrap_symbol, first_key, second_key):
@@ -279,20 +453,18 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
             else:
                 return FlameChannellInterpolator.ConstantPrepolate(first_key.get('Frame'), first_key.get('Value'))
         
-        def pick_extrapolation(extrap_symbol, previous_key, last_key):
-            pass
-            '''
-            if extrap_symbol == 'linear'
-                if previous_key && last_key.interpolation == :linear
+        def pick_extrapolation(self, extrap_symbol, previous_key, last_key):
+            if extrap_symbol != 'constant':
+                if previous_key and (last_key.get('CurveMode')  == 'linear' or last_key.get('CurveOrder')  == 'linear'):
                     # For linear keys the tangent actually does not do anything, so we need to look a frame
                     # ahead and compute the increment
-                    increment = (last_key.value - previous_key.value) / (last_key.frame - previous_key.frame)
-                    LinearExtrapolate.new(last_key.frame, last_key.value, increment)
-                else
-                    LinearExtrapolate.new(last_key.frame, last_key.value, last_key.right_slope)
-            else
-                ConstantExtrapolate.new(last_key.frame, last_key.value)
-            '''
+                    increment = (last_key.get('Value') - previous_key.get('Value')) / (last_key.get('Frame') - previous_key.get('Frame'))
+                    return FlameChannellInterpolator.LinearExtrapolate(last_key.get('Frame'), last_key.get('Value'), increment)
+                else:
+                    last_key_right_slope = last_key.get('LHandle_dY') / last_key.get('LHandle_dX')
+                    return FlameChannellInterpolator.LinearExtrapolate(last_key.get('Frame'), last_key.get('Value'), last_key_right_slope)
+            else:
+                return FlameChannellInterpolator.ConstantExtrapolate(last_key.get('Frame'), last_key.get('Value'))
 
         def key_pair_to_segment(self, key, next_key):
             key_left_tangent = key.get('LHandle_dY') / key.get('LHandle_dX') * -1
@@ -301,32 +473,50 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
             next_key_right_tangent = next_key.get('RHandle_dY') / next_key.get('RHandle_dX')
 
             if key.get('CurveMode') == 'bezier':
-                return FlameChannellInterpolator.BezierSegment(key.frame, next_key.frame,
-                                    key.value, next_key.value,
-                                    key.r_handle_x, key.r_handle_y,
-                                    next_key.l_handle_x, next_key.l_handle_y)
-            elif key.get('CurveMode') in ['natural', 'hermite']:
-                print("We're in Natural:Hermite")
-                print("key.frame: ", key.get('Frame'))
-                print("next_key.frame: ", next_key.get('Frame'))
-                print("key.value: ", key.get('Value'))
-                print("next_key.value: ", next_key.get('Value'))
-                print("key.right_slope: ", key_right_tangent)
-                print("next_key.left_slope: ", next_key_left_tangent)
+                return FlameChannellInterpolator.BezierSegment(
+                    key.get('Frame'), 
+                    next_key.get('Frame'),
+                    key.get('Value'), 
+                    next_key.get('Value'),
+                    float(key.get('Frame')) + float(key.get('RHandle_dX')), 
+                    float(key.get('Value')) + float(key.get('RHandle_dY')),
+                    float(next_key.get('Frame')) + float(next_key.get('LHandle_dX')),
+                    float(next_key.get('Value')) + float(next_key.get('LHandle_dY'))
+                    )
+            
+            elif (key.get('CurveMode') in ['natural', 'hermite']) and (key.get('CurveOrder') == 'cubic'):
                 return FlameChannellInterpolator.HermiteSegment(
                     key.get('Frame'), 
                     next_key.get('Frame'), 
                     key.get('Value'), 
                     next_key.get('Value'),
                     key_right_tangent, 
-                    next_key_left_tangent)
+                    next_key_left_tangent
+                    )
+            elif (key.get('CurveMode') in ['natural', 'hermite']) and (key.get('CurveOrder') == 'quartic'):
+                return FlameChannellInterpolator.HermiteSegmentQuartic(
+                    key.get('Frame'), 
+                    next_key.get('Frame'), 
+                    key.get('Value'), 
+                    next_key.get('Value'),
+                    key_right_tangent, 
+                    next_key_left_tangent
+                    )
             elif key.get('CurveMode') == 'constant':
-                return FlameChannellInterpolator.ConstantSegment(key.frame, next_key.frame, key.value)
+                return FlameChannellInterpolator.ConstantSegment(
+                    key.get('Frame'), 
+                    next_key.get('Frame'), 
+                    key.get('Value')
+                    )
             else:  # Linear and safe
-                return FlameChannellInterpolator.LinearSegment(key.frame, next_key.frame, key.value, next_key.value)
+                return FlameChannellInterpolator.LinearSegment(
+                    key.get('Frame'), 
+                    next_key.get('Frame'), 
+                    key.get('Value'), 
+                    next_key.get('Value')
+                    )
 
 
-    frame_value_map = {}
     tw_setup_xml = ET.fromstring(tw_setup_string)
     tw_setup = dictify(tw_setup_xml)
     # pprint (tw_setup)
@@ -338,71 +528,100 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
     TW_SpeedTiming_size = tw_setup['Setup']['State'][0]['TW_SpeedTiming'][0]['Channel'][0]['Size']
     TW_RetimerMode = tw_setup['Setup']['State'][0]['TW_RetimerMode']
 
-    '''
-    if TW_SpeedTiming_size == 1 and TW_RetimerMode == 0:
-        # just constant speed change with no keyframes set       
-        x = float(tw_setup['Setup']['State'][0]['TW_SpeedTiming'][0]['Channel'][0]['KFrames'][0]['Key'][0]['Frame'][0])
-        y = float(tw_setup['Setup']['State'][0]['TW_SpeedTiming'][0]['Channel'][0]['KFrames'][0]['Key'][0]['Value'][0])
-        ldx = float(tw_setup['Setup']['State'][0]['TW_SpeedTiming'][0]['Channel'][0]['KFrames'][0]['Key'][0]['LHandle_dX'][0])
-        ldy = float(tw_setup['Setup']['State'][0]['TW_SpeedTiming'][0]['Channel'][0]['KFrames'][0]['Key'][0]['LHandle_dY'][0])
-        rdx = float(tw_setup['Setup']['State'][0]['TW_SpeedTiming'][0]['Channel'][0]['KFrames'][0]['Key'][0]['RHandle_dX'][0])
-        rdy = float(tw_setup['Setup']['State'][0]['TW_SpeedTiming'][0]['Channel'][0]['KFrames'][0]['Key'][0]['RHandle_dY'][0])
-
-        for frame_number in range(start_frame, end_frame+1):
-            frame_value_map[frame_number] = extrapolate_linear(x + ldx, y + ldy, x + rdx, y + rdy, frame_number)
-    
-        return frame_value_map
-    '''
-
-    tw_channel = 'TW_Speed' if TW_RetimerMode == 0 else 'TW_Timing'
-    channel = tw_setup['Setup']['State'][0][tw_channel][0]['Channel'][0]
-    if 'KFrames' in channel.keys():
-        channel['KFrames'] = {x['Frame']: x for x in sorted(channel['KFrames'][0]['Key'], key=lambda d: d['Index'])}
-    interpolator = FlameChannellInterpolator(channel)
-    for frame_number in range (start_frame, end_frame+1):
-        frame_value_map[frame_number] = interpolator.sample_at(frame_number)
+    frame_value_map = {}
 
     if TW_RetimerMode == 1:
-        # job's done for 'Timing' channel
+        # 'Timing' channel is enough
+        tw_channel = 'TW_Timing'
+        channel = tw_setup['Setup']['State'][0][tw_channel][0]['Channel'][0]
+        if 'KFrames' in channel.keys():
+            channel['KFrames'] = {x['Frame']: x for x in sorted(channel['KFrames'][0]['Key'], key=lambda d: d['Index'])}
+        interpolator = FlameChannellInterpolator(channel)
+        for frame_number in range (start_frame, end_frame+1):
+            frame_value_map[frame_number] = interpolator.sample_at(frame_number)
         return frame_value_map
 
     else:
-        # speed - based timewarp needs a bit more love
-        # to solve frame values against speed channel
-        # with the help of anchor frames in SpeedTiming channel
+        # speed - based timewarp somehow
+        # solves frames in a different way
+        # depending on a segment mode
 
-        channel = tw_setup['Setup']['State'][0]['TW_SpeedTiming'][0]['Channel'][0]
+        tw_channel = 'TW_Speed'
+        channel = tw_setup['Setup']['State'][0][tw_channel][0]['Channel'][0]
         if 'KFrames' in channel.keys():
             channel['KFrames'] = {x['Frame']: x for x in sorted(channel['KFrames'][0]['Key'], key=lambda d: d['Index'])}
+        speed_channel = dict(channel)
+        tw_channel = 'TW_SpeedTiming'
+        channel = tw_setup['Setup']['State'][0][tw_channel][0]['Channel'][0]
+        if 'KFrames' in channel.keys():
+            channel['KFrames'] = {x['Frame']: x for x in sorted(channel['KFrames'][0]['Key'], key=lambda d: d['Index'])}
+        speed_timing_channel = dict(channel)
+
+        pprint (speed_timing_channel)
+        pprint (speed_channel)
+
+
+        speed_interpolator = FlameChannellInterpolator(speed_channel)
+        timing_interpolator = FlameChannellInterpolator(speed_timing_channel)
+
+        for frame_number in range (start_frame, end_frame+1):
+            frame_value_map[frame_number] = round(timing_interpolator.sample_at(frame_number), 2)
         
-        pprint (channel)
+        '''
+        for frame_number in range (start_frame, end_frame+1):
+            if speed_interpolator.segment_mode(frame_number) in ['hermite', 'linear']:
+                speed_segment = speed_interpolator.get_segment(frame_number)
+                start_frame_value = timing_interpolator.sample_at(speed_segment.start_frame)
+                start_speed_value = speed_interpolator.sample_at(speed_segment.start_frame)
+                previous_frame_value = start_frame_value
+                previous_speed_value = start_speed_value
+                for segment_frame_number in range (
+                    int(round(speed_segment.start_frame)) + 1, 
+                    int(round(speed_segment.end_frame)) 
+                    ):
+                    speed_value = speed_interpolator.sample_at(segment_frame_number)
+                    speed_delta = previous_speed_value - speed_value
+                    
+                    new_frame_value = previous_frame_value + (1 / (100 / speed_value)) + (1 / (100 / speed_delta)) / 2
+                    if segment_frame_number == frame_number:
+                        frame_value_map[frame_number] = round(new_frame_value, 2)
+                        break
+                    previous_frame_value = new_frame_value
+                    previous_speed_value = speed_value
+        '''
+        # print ('frame: %s, speed mode: %s, timing_mode: %s' % (frame_number, speed_interpolator.segment_mode(frame_number), timing_interpolator.segment_mode(frame_number)))
+        
+        pprint (frame_value_map)
+        # pprint (timing_map)
+
         sys.exit()
 
-        tw_speed_timing = {}
-        TW_SpeedTiming = xml.getElementsByTagName('TW_SpeedTiming')
-        keys = TW_SpeedTiming[0].getElementsByTagName('Key')
-        for key in keys:
-            index = key.getAttribute('Index') 
-            frame = key.getElementsByTagName('Frame')
-            if frame:
-                frame = (frame[0].firstChild.nodeValue)
-            value = key.getElementsByTagName('Value')
-            if value:
-                value = (value[0].firstChild.nodeValue)
-            tw_speed_timing[int(index)] = {'frame': int(frame), 'value': float(value)}
+
+        timing_map = {}
+        tw_channel = 'TW_SpeedTiming'
+        channel = tw_setup['Setup']['State'][0][tw_channel][0]['Channel'][0]
+        if 'KFrames' in channel.keys():
+            channel['KFrames'] = {x['Frame']: x for x in sorted(channel['KFrames'][0]['Key'], key=lambda d: d['Index'])}
+            kframes = channel.get('KFrames')
+            index_frames = list(kframes.keys())
+        else:
+            kframes = {}
+            index_frames = []
         
-        if tw_speed_timing[0]['frame'] > start:
+        if index_frames[0] > start_frame:
             # we need to extrapolate backwards from the first 
             # keyframe in SpeedTiming channel
 
-            anchor_frame_value = tw_speed_timing[0]['value']
-            for frame_number in range(tw_speed_timing[0]['frame'] - 1, start - 1, -1):
-                if frame_number + 1 not in tw_channel.keys() or frame_number not in tw_channel.keys():
-                    step_back = tw_channel[min(list(tw_channel.keys()))] / 100
-                else:
-                    step_back = (tw_channel[frame_number + 1] + tw_channel[frame_number]) / 200
-                frame_value_map[frame_number] = anchor_frame_value - step_back
-                anchor_frame_value = frame_value_map[frame_number]
+            previous_frame_value = kframes[index_frames[0]]['Value']
+            previous_frame_value = float(format(previous_frame_value,".2f"))
+            timing_map[index_frames[0]] = previous_frame_value
+            for frame_number in range(index_frames[0] - 1, start_frame - 1, -1):
+                new_value = previous_frame_value - (1 / (100 / frame_value_map[frame_number]))
+                new_value = float(format(new_value,".2f"))
+                timing_map[frame_number] = new_value
+                previous_frame_value = new_value
+            
+            pprint (timing_map)
 
         # build up frame values between keyframes of SpeedTiming channel
         for key_frame_index in range(0, len(tw_speed_timing.keys()) - 1):
