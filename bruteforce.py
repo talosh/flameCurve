@@ -37,6 +37,12 @@ class HermiteSegmentQuartic():
         self.start_frame, self.end_frame = from_frame, to_frame
         frame_interval = (self.end_frame - self.start_frame)
         self._mode = 'hermite'
+        self.value1 = value1
+        self.value2 = value2
+        self.tangent1 = tangent1
+        self.tangent2 = tangent2
+        self.frame_interval = frame_interval
+
 
         '''
         self.HERMATRIX = np.array([
@@ -51,9 +57,9 @@ class HermiteSegmentQuartic():
         # Default tangents in flame are 0, so when we do None.to_f this is what we will get
         # CC = {P1, P2, T1, T2}
         p1, p2, t1, t2 = value1, value2, tangent1 * frame_interval, tangent2 * frame_interval
-        self.hermite = np.array([p1, p2, t1, t2, 0])
+        self.hermite = np.array([p1, p2, t1, t2])
 
-    def value_at(self, frame, HERMATRIX):
+    def value_at(self, frame, alpha, beta):
         if frame == self.start_frame:
             return self.hermite[0]
 
@@ -62,27 +68,38 @@ class HermiteSegmentQuartic():
 
         # S[s_] = {s^4, s^3, s^2, s^1, s^0}
         multipliers_vec = np.array([t ** 4, t ** 3, t ** 2, t ** 1, t ** 0])
-        self.basis = np.dot(HERMATRIX, self.hermite)
+        # self.basis = np.dot(HERMATRIX, self.hermite)
 
         # P[s_] = S[s].h.CC
-        interpolated_scalar = np.dot(self.basis, multipliers_vec)
+        # interpolated_scalar = np.dot(self.basis, multipliers_vec)
+        # quatric functions
+
+        aa0 = 1 + (alpha - 3)*(t ** 2) + 2 * (1 - alpha) * (t ** 3) + alpha * (t ** 4)
+        aa1 = (3 - alpha) * (t **2) + 2 * (alpha - 1) * (t ** 3) - alpha * (t ** 4)
+        bb0 = t + (beta - 2) * (t ** 2) + (1 - 2 * beta) * (t ** 3) + beta * (t ** 4)
+        bb1 = -1 * (beta + 1) * (t ** 2) + (2 * beta + 1) * (t ** 3) - beta * (t ** 4)
+
+        # P[s_] = S[s].h.CC
+        # interpolated_scalar = np.dot(self.basis, multipliers_vec)
+        p1, p2, t1, t2 = self.value1, self.value2, self.tangent1 * self.frame_interval, self.tangent2 * self.frame_interval
+        # interpolated_scalar = a0*p1 + a1*p2 + b0*t1 + b1*t2
+        interpolated_scalar = aa0*p1 + aa1*p2 + bb0*t1 + bb1*t2
         return interpolated_scalar
 
-a = -3
+a = -4
 b = 4
 
 rows = []
 
-for a1 in range (a, b):
-    for a2 in range (a, b):
-        for a3 in range (a, b):
-            for a4 in range (a, b):
-                for a5 in range (a, b):
-                    R = [a1, a2, a3, a4, a5]
-                    rows.append(R)
+for a1 in range (a, b+1):
+    for a2 in range (a, b+1):
+        for a3 in range (a, b+1):
+            for a4 in range (a, b+1):
+                R = [a1, a2, a3, a4]
+                rows.append(R)
 
 
-test_frames_one = [12]
+test_frames_one = [12, 18]
 test_frames_three = [8, 12, 18]
 test_frames_five = [4, 8, 12, 18, 24]
 
@@ -92,11 +109,11 @@ for frame in test_frames_one:
 
 correct_result_three = {}
 for frame in test_frames_three:
-    correct_result_three[frame] = round(correct_values[frame], 2)
+    correct_result_three[frame] = round(correct_values[frame], 1)
 
 correct_result_five = {}
 for frame in test_frames_five:
-    correct_result_five[frame] = round(correct_values[frame], 2)
+    correct_result_five[frame] = round(correct_values[frame], 1)
 
 
 interp = HermiteSegmentQuartic(
@@ -108,20 +125,26 @@ interp = HermiteSegmentQuartic(
     -0.5,
 )
 
-def test_values(HERMATRIX):
+def test_values(alpha, beta):
     test_result = {}
 
     for test_frame in test_frames_one:
-        test_result[test_frame] = round(interp.value_at(test_frame, HERMATRIX), 2)
+        test_result[test_frame] = round(interp.value_at(test_frame, alpha, beta), 2)
+        print ("%s, %s" % (test_frame, test_result[test_frame]), end="\r", flush=True)
+
 
     if list(test_result.values()) == list(correct_result_one.values()):
+        print ('*********')
+        print ('alpha: %s, beta: %s' % (alpha, beta))
+        print ('*********')
+
         test_result = {}
         for test_frame in test_frames_three:
-            test_result[test_frame] = round(interp.value_at(test_frame, HERMATRIX), 2)
+            test_result[test_frame] = round(interp.value_at(test_frame, alpha, beta), 1)
         
         if list(test_result.values()) == list(correct_result_three.values()):
             print ('*********')
-            pprint (HERMATRIX)
+            print ('alpha: %s, beta: %s' % (alpha, beta))
             print ('*********')
 
             # test_result = {}
@@ -131,6 +154,10 @@ def test_values(HERMATRIX):
     # del interp
 
 if __name__ == '__main__':
+    for alpha in range (-100000, 100000):
+        for beta in range (-100000, 100000):
+            test_values(alpha/1000, beta / 1000)
+'''
     for row5 in rows:
         for row4 in rows:
             for row3 in rows:
@@ -155,6 +182,7 @@ if __name__ == '__main__':
             # print ('row3 passed')
         # print ('row2 passed')
     # print ('row1 passed: done')
+'''
 
 
 
