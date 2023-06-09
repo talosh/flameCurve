@@ -157,50 +157,6 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
                 return interpolated_scalar
 
         class HermiteSegmentQuartic(LinearSegment):
-            '''
-            Make sure not to confuse them with quartic (= degree 4) Hermite splines, 
-            which are defined by 5 values per segment: function value and first derivative at both ends, 
-            and one of the second derivatives.
-            '''
-            '''
-            P(x0) = y0    =>    a0 + a1*x0 + a2*x0^2 + a3*x0^3 + a4*x0^4 = y0   --(1)
-            P(x1) = y1    =>    a0 + a1*x1 + a2*x1^2 + a3*x1^3 + a4*x1^4 = y1   --(2)
-            
-            P'(x0) = tx0    =>    a1 + 2*a2*x0 + 3*a3*x0^2 + 4*a4*x0^3 = tx0   --(3)
-            P'(x1) = tx1    =>    a1 + 2*a2*x1 + 3*a3*x1^2 + 4*a4*x1^3 = tx1   --(4)
-
-            We have four equations (equations (1)-(4)) and five unknowns (a0, a1, a2, a3, a4). 
-            To solve this system of equations, we can rewrite it in matrix form:
-
-            A * X = B
-
-            where A is the coefficient matrix, 
-            X is the column vector of unknowns, 
-            and B is the column vector of constants.
-
-            A = | 1   x0   x0^2   x0^3   x0^4 |
-                | 1   x1   x1^2   x1^3   x1^4 |
-                | 0   1    2*x0   3*x0^2 4*x0^3 |
-                | 0   1    2*x1   3*x1^2 4*x1^3 |
-
-            X = | a0 |
-                | a1 |
-                | a2 |
-                | a3 |
-                | a4 |
-
-            B = | y0 |
-                | y1 |
-                | tx0 |
-                | tx1 |
-
-            To solve for X, we can compute X = inv(A) * B, where inv(A) is the inverse of matrix A.
-            Once we have the values of a0, a1, a2, a3, and a4, we can substitute them back 
-            into the quartic polynomial P(x) to obtain the interpolated values for any desired x.
-
-            P(x) = a0 + a1*x + a2*x^2 + a3*x^3 + a4*x^4
-            
-            '''
             def __init__(self, from_frame, to_frame, value1, value2, tangent1, tangent2):
                 self.start_frame, self.end_frame = from_frame, to_frame
                 frame_interval = (self.end_frame - self.start_frame)
@@ -212,25 +168,8 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
                 self.tangent1 = tangent1
                 self.tangent2 = tangent2
                 self.frame_interval = frame_interval
-
-                self.HERMATRIX = np.array([
-                            [2, -2, 1, 1],
-                            [-3, 3, -2, -1],
-                            [0, 0, 1, 0],
-                            [1, 0, 0, 0],
-                            [2, 0, 0, 0]
-                        ])
-                
-                # self.HERMATRIX = np.linalg.inv(self.HERMATRIX)
-                # pprint (self.HERMATRIX)
-
-                # Default tangents in flame are 0, so when we do None.to_f this is what we will get
-                # CC = {P1, P2, T1, T2}
                 p1, p2, t1, t2 = value1, value2, tangent1 * frame_interval, tangent2 * frame_interval
                 self.hermite = np.array([p1, p2, t1, t2])
-                pprint (self.hermite)
-                self.basis = np.dot(self.HERMATRIX, self.hermite)
-                pprint (self.basis)
 
             def value_at(self, frame):
                 if frame == self.start_frame:
@@ -239,16 +178,7 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
                 # Get the 0 < T < 1 interval we will interpolate on
                 t = (frame - self.start_frame) / (self.end_frame - self.start_frame)
 
-                # S[s_] = {s^4, s^3, s^2, s^1, s^0}
-                multipliers_vec = np.array([t ** 4, t ** 3, t ** 2, t ** 1, t ** 0])
-
-                # cubic functions
-                a0 = (1 - 3 * (t ** 2) + 2 * (t ** 3))
-                a1 = (3 * (t ** 2) - 2 * (t ** 3))
-                b0 = (t - 2* (t ** 2) + t**3)
-                b1 = -1 * (t ** 2) + (t ** 3)
-
-                # quatric functions
+                # quatric coefficients
                 alpha = self.a
                 beta = self.b
 
@@ -309,6 +239,7 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
             P(x) = a0 + a1*x + a2*x^2 + a3*x^3 + a4*x^4
             
             '''
+
             def __init__(self, from_frame, to_frame, value1, value2, tangent1, tangent2):
                 self.start_frame, self.end_frame = from_frame, to_frame
                 frame_interval = (self.end_frame - self.start_frame)
@@ -323,15 +254,12 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
                         ])
                 
                 self.HERMATRIX = np.linalg.inv(self.HERMATRIX)
-                pprint (self.HERMATRIX)
 
                 # Default tangents in flame are 0, so when we do None.to_f this is what we will get
                 # CC = {P1, P2, T1, T2}
                 p1, p2, t1, t2 = value1, value2, tangent1 * frame_interval, tangent2 * frame_interval
                 self.hermite = np.array([p1, p2, t1, t2, 0])
-                pprint (self.hermite)
                 self.basis = np.dot(self.HERMATRIX, self.hermite)
-                pprint (self.basis)
 
             def value_at(self, frame):
                 if frame == self.start_frame:
@@ -611,6 +539,18 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
                     next_key_left_tangent
                     )
             elif (key.get('CurveMode') in ['natural', 'hermite']) and (key.get('CurveOrder') == 'quartic'):
+
+                '''
+                return FlameChannellInterpolator.HermiteSegmentQuartic(
+                    key.get('Frame'), 
+                    next_key.get('Frame'), 
+                    key.get('Value'), 
+                    next_key.get('Value'),
+                    key_right_tangent, 
+                    next_key_left_tangent
+                    )
+                '''
+
                 return FlameChannellInterpolator.HermiteSegmentQuartic5x5(
                     key.get('Frame'), 
                     next_key.get('Frame'), 
@@ -619,6 +559,7 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
                     key_right_tangent, 
                     next_key_left_tangent
                     )
+
             elif key.get('CurveMode') == 'constant':
                 return FlameChannellInterpolator.ConstantSegment(
                     key.get('Frame'), 
@@ -681,35 +622,9 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
         for frame_number in range (start_frame, end_frame+1):
             frame_value_map[frame_number] = round(timing_interpolator.sample_at(frame_number), 2)
         
+        return frame_value_map
+
         '''
-        for frame_number in range (start_frame, end_frame+1):
-            if speed_interpolator.segment_mode(frame_number) in ['hermite', 'linear']:
-                speed_segment = speed_interpolator.get_segment(frame_number)
-                start_frame_value = timing_interpolator.sample_at(speed_segment.start_frame)
-                start_speed_value = speed_interpolator.sample_at(speed_segment.start_frame)
-                previous_frame_value = start_frame_value
-                previous_speed_value = start_speed_value
-                for segment_frame_number in range (
-                    int(round(speed_segment.start_frame)) + 1, 
-                    int(round(speed_segment.end_frame)) 
-                    ):
-                    speed_value = speed_interpolator.sample_at(segment_frame_number)
-                    speed_delta = previous_speed_value - speed_value
-                    
-                    new_frame_value = previous_frame_value + (1 / (100 / speed_value)) + (1 / (100 / speed_delta)) / 2
-                    if segment_frame_number == frame_number:
-                        frame_value_map[frame_number] = round(new_frame_value, 2)
-                        break
-                    previous_frame_value = new_frame_value
-                    previous_speed_value = speed_value
-        '''
-        # print ('frame: %s, speed mode: %s, timing_mode: %s' % (frame_number, speed_interpolator.segment_mode(frame_number), timing_interpolator.segment_mode(frame_number)))
-        
-        pprint (frame_value_map)
-
-        sys.exit()
-
-
         timing_map = {}
         tw_channel = 'TW_SpeedTiming'
         channel = tw_setup['Setup']['State'][0][tw_channel][0]['Channel'][0]
@@ -829,6 +744,7 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
                 anchor_frame_value = frame_value_map[frame_number]
 
         return frame_value_map
+        '''
 
 def main():
     if len(sys.argv) < 2:
@@ -847,11 +763,42 @@ def main():
         start_frame = int(sys.argv[2])
         end_frame = int(sys.argv[3])
 
-    keys = bake_flame_tw_setup(tw_setup_string, start_frame, end_frame)
+    correct_values = {1: 1.0,
+    2: 2,
+    3: 3,
+    4: 3.98,
+    5: 4.96,
+    6: 5.93,
+    7: 6.88,
+    8: 7.81,
+    9: 8.72,
+    10: 9.61,
+    11: 10.48,
+    12: 11.32,
+    13: 12.14,
+    14: 12.93,
+    15: 13.69,
+    16: 14.43,
+    17: 15.14,
+    18: 15.82,
+    19: 16.48,
+    20: 17.11,
+    21: 17.72,
+    22: 18.31,
+    23: 18.88,
+    24: 19.43,
+    25: 19.96,
+    26: 20.49,
+    27: 21,
+    28: 21.5}
 
+    print ('flame values:')
+    pprint (correct_values)
+
+    keys = bake_flame_tw_setup(tw_setup_string, start_frame, end_frame)
+    print ('interpolated values:')
     pprint (keys)
     sys.exit()
-
 
 if __name__ == '__main__':
     main()
