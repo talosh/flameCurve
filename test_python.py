@@ -4,26 +4,27 @@ import sys
 import numpy as np
 from pprint import pprint, pformat
 
-def dictify(r, root=True):
-    from copy import copy
-
-    if root:
-        return {r.tag: dictify(r, False)}
-
-    d = copy(r.attrib)
-    if r.text:
-        d["_text"] = r.text
-    for x in r.findall("./*"):
-        if x.tag not in d:
-            d[x.tag] = []
-        d[x.tag].append(dictify(x, False))
-
-    return d
 
 def decode_tw_setup(temp_setup_path):
     import xml.etree.ElementTree as ET
     import math
     
+    def dictify(r, root=True):
+        from copy import copy
+
+        if root:
+            return {r.tag: dictify(r, False)}
+
+        d = copy(r.attrib)
+        if r.text:
+            d["_text"] = r.text
+        for x in r.findall("./*"):
+            if x.tag not in d:
+                d[x.tag] = []
+            d[x.tag].append(dictify(x, False))
+
+        return d
+
     with open(temp_setup_path, 'r') as tw_setup_file:
         tw_setup_string = tw_setup_file.read()
         tw_setup_file.close()
@@ -71,6 +72,8 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
         for x in r.findall('./*'):
             if x.tag not in d:
                 v = dictify(x, False)
+                if not isinstance (d, dict):
+                    d = {}
                 if isinstance (v, str):
                     d[x.tag] = string_to_value(v)
                 else:
@@ -78,7 +81,7 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
             if isinstance(d[x.tag], list):
                 d[x.tag].append(dictify(x, False))
         return d
-
+    
     class FlameChannellInterpolator:
         # An attempt of a python rewrite of Julit Tarkhanov's original
         # Flame Channel Parsr written in Ruby.
@@ -630,10 +633,8 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
                     next_key.get('Value')
                     )
 
-
     tw_setup_xml = ET.fromstring(tw_setup_string)
     tw_setup = dictify(tw_setup_xml)
-    # pprint (tw_setup)
 
     # start = int(tw_setup['Setup']['Base'][0]['Range'][0]['Start'])
     # end = int(tw_setup['Setup']['Base'][0]['Range'][0]['End'])
@@ -649,7 +650,7 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
         tw_channel = 'TW_Timing'
         channel = tw_setup['Setup']['State'][0][tw_channel][0]['Channel'][0]
         if 'KFrames' in channel.keys():
-            channel['KFrames'] = {x['Frame']: x for x in sorted(channel['KFrames'][0]['Key'], key=lambda d: d['Index'])}
+            channel['KFrames'] = {x['Frame']: x for x in sorted(channel['KFrames'][0]['Key'], key=lambda d: d['Value'])}
         interpolator = FlameChannellInterpolator(channel)
         for frame_number in range (start_frame, end_frame+1):
             frame_value_map[frame_number] = interpolator.sample_at(frame_number)
@@ -663,17 +664,16 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
         tw_channel = 'TW_Speed'
         channel = tw_setup['Setup']['State'][0][tw_channel][0]['Channel'][0]
         if 'KFrames' in channel.keys():
-            channel['KFrames'] = {x['Frame']: x for x in sorted(channel['KFrames'][0]['Key'], key=lambda d: d['Index'])}
+            channel['KFrames'] = {x['Frame']: x for x in sorted(channel['KFrames'][0]['Key'], key=lambda d: d['Value'])}
         speed_channel = dict(channel)
         tw_channel = 'TW_SpeedTiming'
         channel = tw_setup['Setup']['State'][0][tw_channel][0]['Channel'][0]
         if 'KFrames' in channel.keys():
-            channel['KFrames'] = {x['Frame']: x for x in sorted(channel['KFrames'][0]['Key'], key=lambda d: d['Index'])}
+            channel['KFrames'] = {x['Frame']: x for x in sorted(channel['KFrames'][0]['Key'], key=lambda d: d['Value'])}
         speed_timing_channel = dict(channel)
 
         # pprint (speed_timing_channel)
         # pprint (speed_channel)
-
 
         speed_interpolator = FlameChannellInterpolator(speed_channel)
         timing_interpolator = FlameChannellInterpolator(speed_timing_channel)
@@ -706,7 +706,6 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
         # print ('frame: %s, speed mode: %s, timing_mode: %s' % (frame_number, speed_interpolator.segment_mode(frame_number), timing_interpolator.segment_mode(frame_number)))
         
         pprint (frame_value_map)
-        # pprint (timing_map)
 
         sys.exit()
 
@@ -715,7 +714,7 @@ def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
         tw_channel = 'TW_SpeedTiming'
         channel = tw_setup['Setup']['State'][0][tw_channel][0]['Channel'][0]
         if 'KFrames' in channel.keys():
-            channel['KFrames'] = {x['Frame']: x for x in sorted(channel['KFrames'][0]['Key'], key=lambda d: d['Index'])}
+            channel['KFrames'] = {x['Frame']: x for x in sorted(channel['KFrames'][0]['Key'], key=lambda d: d['Value'])}
             kframes = channel.get('KFrames')
             index_frames = list(kframes.keys())
         else:
@@ -856,26 +855,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-'''
-HERMATRIX = np.array([[2, -2, 1, 1], [-3, 3, -2, -1], [0, 0, 1, 0], [1, 0, 0, 0]])
-print (HERMATRIX)
-hermite_vector = np.array([9.0, 12.0, 18.78345865418239, -12.138369540337518])
-print (hermite_vector)
-hermite_basis = HERMATRIX.dot(hermite_vector)
-print (hermite_basis)
-
-start_frame = 1
-end_frame = 8
-
-for x in range(start_frame, end_frame+1):
-    t = float(x - start_frame) / (end_frame - start_frame)
-    print ("frame = %s" % x)
-    print ("t = %s" % t)
-    multipliers_vec = np.array([t ** 3,  t ** 2, t ** 1, t ** 0])
-    print ("multipliers vec: %s" % multipliers_vec)
-    sum = 0.0
-    for i in range (0, 4):
-        sum += hermite_basis[i] * multipliers_vec[i]
-    print (sum)
-'''
