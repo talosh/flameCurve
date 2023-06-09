@@ -41,16 +41,10 @@ def decode_tw_setup(temp_setup_path):
 def bake_flame_tw_setup(tw_setup_string, start_frame, end_frame):
     import numpy as np
     import xml.etree.ElementTree as ET
-    import re
 
     # parses tw setup from flame and returns dictionary
     # with baked frame - value pairs
     
-    def extrapolate_linear(xa, ya, xb, yb, xc):
-        m = (ya - yb) / (xa - xb)
-        yc = (xc - xb) * m + yb
-        return yc
-
     def dictify(r, root=True):
         def string_to_value(s):
             if (s.find('-') <= 0) and s.replace('-', '', 1).isdigit():
